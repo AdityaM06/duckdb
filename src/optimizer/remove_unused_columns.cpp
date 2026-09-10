@@ -1121,6 +1121,8 @@ void RemoveUnusedColumns::RemoveColumnsFromLogicalGet(LogicalGet &get, unique_pt
 
 	//! for each filter that was pushed down - convert them into an expression
 	vector<unique_ptr<Expression>> filter_expressions;
+	filter_expressions.reserve(get.table_filters.FilterCount());
+	vector<unique_ptr<Expression>> multi_column_filter_columns;
 	for (auto &entry : get.table_filters) {
 		auto filter_idx = entry.GetIndex();
 		auto &filter = entry.Filter();
@@ -1139,15 +1141,21 @@ void RemoveUnusedColumns::RemoveColumnsFromLogicalGet(LogicalGet &get, unique_pt
 		//! Now visit the filter to add to the 'column_references'
 		VisitExpression(&filter_expressions.back());
 	}
+	idx_t multi_column_filter_count = 0;
+	for (const auto &filter : get.table_filters.GetMultiColumnFilters()) {
+		const auto &expression_filter = ExpressionFilter::GetExpressionFilter(*filter, "RemoveUnusedColumns::VisitGet");
+		multi_column_filter_count += expression_filter.column_indexes.size();
+	}
+	multi_column_filter_columns.reserve(multi_column_filter_count);
 	for (const auto &filter : get.table_filters.GetMultiColumnFilters()) {
 		const auto &expression_filter = ExpressionFilter::GetExpressionFilter(*filter, "RemoveUnusedColumns::VisitGet");
 		for (const auto &filter_idx : expression_filter.column_indexes) {
 			const auto &col_id = get.GetColumnIndex(filter_idx);
 			auto column_type = get.GetColumnType(col_id);
 			ColumnBinding filter_binding(get.table_index, filter_idx);
-			unique_ptr<Expression> column_ref =
-			    make_uniq<BoundColumnRefExpression>(std::move(column_type), filter_binding);
-			VisitExpression(&column_ref);
+			multi_column_filter_columns.push_back(
+			    make_uniq<BoundColumnRefExpression>(std::move(column_type), filter_binding));
+			VisitExpression(&multi_column_filter_columns.back());
 		}
 	}
 
